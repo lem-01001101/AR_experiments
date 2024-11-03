@@ -17,6 +17,7 @@ public class ARObjectPlacer : NetworkBehaviour
     private int touchCount = 0;
 
     private InputAction touchPositionAction;
+    private InputAction clickPositionAction; // For mouse clicks in the editor
     private NetworkRunner _networkRunner;
 
     void Awake()
@@ -27,14 +28,16 @@ public class ARObjectPlacer : NetworkBehaviour
         // Create and enable the touch action
         touchPositionAction = new InputAction("TouchPosition", binding: "<Touchscreen>/primaryTouch/position");
         touchPositionAction.Enable();
+
+        // Create and enable the mouse click action (for testing in editor)
+        clickPositionAction = new InputAction("ClickPosition", binding: "<Mouse>/position");
+        clickPositionAction.Enable();
     }
 
     private void OnEnable()
     {
-        // Assign ARPlaneManager from the XR Origin (make sure XR Origin has the ARPlaneManager attached)
         arPlaneManager = GetComponent<ARPlaneManager>();
 
-        // Check if arPlaneManager is not null to avoid errors
         if (arPlaneManager != null)
         {
             arPlaneManager.planesChanged += PlanesChanged;
@@ -47,13 +50,13 @@ public class ARObjectPlacer : NetworkBehaviour
 
     private void OnDisable()
     {
-        // Unsubscribe from event to avoid memory leaks
         if (arPlaneManager != null)
         {
             arPlaneManager.planesChanged -= PlanesChanged;
         }
 
         touchPositionAction.Disable();
+        clickPositionAction.Disable();
     }
 
     private void PlanesChanged(ARPlanesChangedEventArgs args)
@@ -66,7 +69,6 @@ public class ARObjectPlacer : NetworkBehaviour
 
     void Update()
     {
-        // Ensure the NetworkRunner is running
         if (_networkRunner == null || !_networkRunner.IsRunning)
         {
             Debug.LogWarning("NetworkRunner is not running.");
@@ -75,26 +77,47 @@ public class ARObjectPlacer : NetworkBehaviour
 
         Debug.Log("Update is running...");
 
-        // Check if there are any active touches
-        if (Touchscreen.current != null && Touchscreen.current.primaryTouch.press.isPressed)
+#if UNITY_EDITOR
+        // Use mouse click in editor
+        if (Mouse.current.leftButton.wasPressedThisFrame)
         {
-            Vector2 touchPosition = touchPositionAction.ReadValue<Vector2>();
-            Debug.Log("Touch detected: Position = " + touchPosition);
+            Vector2 clickPosition = clickPositionAction.ReadValue<Vector2>();
 
-            // Track touch count regardless of raycast result
-            touchCount++;
-            touchCountText.text = "Touches: " + touchCount;
-
-            // Perform raycast against all types of planes
-            if (arRaycastManager.Raycast(touchPosition, hits, TrackableType.Planes))
+            // Perform raycast to detect planes
+            if (arRaycastManager.Raycast(clickPosition, hits, TrackableType.Planes))
             {
                 Pose hitPose = hits[0].pose;
                 Debug.Log("Raycast hit at position: " + hitPose.position + " with rotation: " + hitPose.rotation);
 
                 // Spawn the object over the network
                 NetworkObject placedObject = _networkRunner.Spawn(objectToPlacePrefab, hitPose.position, hitPose.rotation);
+                placedObject.transform.SetParent(hits[0].trackable.transform);
 
-                // Optionally, set the parent to the detected plane's transform (ensure synchronization)
+                // Update touch count for testing purposes
+                touchCount++;
+                touchCountText.text = "Touches: " + touchCount;
+            }
+            else
+            {
+                Debug.Log("No plane detected at click position.");
+            }
+        }
+#else
+        // Use touch input on mobile
+        if (Touchscreen.current != null && Touchscreen.current.primaryTouch.press.isPressed)
+        {
+            Vector2 touchPosition = touchPositionAction.ReadValue<Vector2>();
+            Debug.Log("Touch detected: Position = " + touchPosition);
+
+            touchCount++;
+            touchCountText.text = "Touches: " + touchCount;
+
+            if (arRaycastManager.Raycast(touchPosition, hits, TrackableType.Planes))
+            {
+                Pose hitPose = hits[0].pose;
+                Debug.Log("Raycast hit at position: " + hitPose.position + " with rotation: " + hitPose.rotation);
+
+                NetworkObject placedObject = _networkRunner.Spawn(objectToPlacePrefab, hitPose.position, hitPose.rotation);
                 placedObject.transform.SetParent(hits[0].trackable.transform);
             }
             else
@@ -102,5 +125,6 @@ public class ARObjectPlacer : NetworkBehaviour
                 Debug.Log("No plane detected at touch position.");
             }
         }
+#endif
     }
 }
